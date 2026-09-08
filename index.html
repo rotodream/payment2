@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>共通利用センター</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--ink:#182033;--muted:#667085;--line:#e5e7eb;--accent:#3d63dd;--ok:#087a55;--warn:#9a6700;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif}
+.wrap{width:min(760px,100%);margin:auto;min-height:100vh;background:#fff}
+.top{padding:28px 20px 18px;background:linear-gradient(145deg,#eef3ff,#fff)}
+.eyebrow{font-size:11px;font-weight:900;letter-spacing:.12em;color:#6574a8}
+h1{margin:6px 0 4px;font-size:28px}.top p{margin:0;color:var(--muted);font-size:13px;line-height:1.65}
+.nav{display:grid;grid-template-columns:repeat(3,1fr);position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line)}
+.nav button{border:0;background:#fff;padding:14px 4px;font-weight:800;color:#667085}
+.nav button.active{color:var(--accent);border-bottom:3px solid var(--accent)}
+.panel{display:none;padding:14px 14px 60px}.panel.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:15px;margin:10px 0;box-shadow:0 5px 18px #1018280a}
+.title{font-size:18px;font-weight:900}.sub{font-size:13px;font-weight:900;margin-bottom:8px}
+.muted{font-size:12px;color:var(--muted);line-height:1.65}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}.stack{display:flex;gap:8px;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.field,select{width:100%;padding:12px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:15px;margin:5px 0 10px}
+label{font-size:11px;font-weight:800;color:#475467}
+.btn{border:0;border-radius:12px;padding:11px 13px;font-weight:900;cursor:pointer}.btn:disabled{opacity:.5}
+.primary{background:var(--accent);color:#fff}.secondary{background:#eef2f6;color:#344054}.danger{background:#fee4e2;color:#b42318}.sm{padding:7px 10px;font-size:11px}
+.status{border-radius:13px;padding:10px 12px;font-size:12px;line-height:1.6;margin:10px 0}.ok{background:#ecfdf3;color:#067647}.warn{background:#fffaeb;color:#93370d}.bad{background:#fef3f2;color:#b42318}
+.price{font-size:26px;font-weight:950;margin:10px 0 0}.price small{font-size:12px;color:var(--muted)}
+.tag{background:#eef2ff;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900}
+.adminItem{border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.modal{position:fixed;inset:0;background:#11182799;display:none;align-items:flex-end;justify-content:center;padding:14px;z-index:30}.modal.show{display:flex}
+.sheet{width:min(600px,100%);max-height:92vh;overflow:auto;background:white;border-radius:22px;padding:18px}
+.square{border:1px solid #d8dee8;border-radius:13px;padding:12px;margin:12px 0;min-height:90px}
+.foot{text-align:center;font-size:10px;color:#98a2b3;padding:10px 12px 30px}
+table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:7px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+@media(max-width:420px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">COMMON ACCESS CENTER / PAY2</div>
+  <h1>共通利用センター</h1>
+  <p>無料・無料期間・月額利用を、各Webアプリ共通で管理するための中央センターです。</p>
+</header>
+
+<nav class="nav">
+  <button class="active" data-tab="member">利用者</button>
+  <button data-tab="apps">アプリ</button>
+  <button data-tab="admin">管理者</button>
+</nav>
+
+<section id="member" class="panel active"></section>
+<section id="apps" class="panel"></section>
+<section id="admin" class="panel"></section>
+
+<div class="foot" id="footText"></div>
+</div>
+
+<div id="payModal" class="modal">
+  <div class="sheet">
+    <div class="row">
+      <h2 id="payTitle">Square Sandbox</h2>
+      <button class="btn secondary sm" id="closePay">閉じる</button>
+    </div>
+    <p class="muted" id="payExplain"></p>
+    <div id="card-container" class="square"></div>
+    <div id="payStatus"></div>
+    <button class="btn primary" id="payBtn">決済テスト</button>
+  </div>
+</div>
+
+<script>
+const LOCAL_PREVIEW = location.protocol === "file:";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+const yen = n => new Intl.NumberFormat("ja-JP").format(Number(n || 0));
+
+let cfg = {};
+let apps = [];
+let me = null;
+let card = null;
+let selectedPayApp = null;
+let squareLoadedMode = "";
+
+const mock = {
+  apps: JSON.parse(localStorage.getItem("pay2_preview_apps") || "null") || [
+    {id:"farm",name:"農作業日誌",url:"https://example.com/farm",billing_mode:"subscription",trial_days:30,monthly_price:500,paid_days:30,enabled:true},
+    {id:"free-sample",name:"無料サンプルアプリ",url:"https://example.com/free",billing_mode:"free",trial_days:0,monthly_price:0,paid_days:30,enabled:true}
+  ],
+  access: JSON.parse(localStorage.getItem("pay2_preview_access") || "{}"),
+  square: JSON.parse(localStorage.getItem("pay2_preview_square") || '{"mode":"sandbox","square_app_id":"","square_location_id":""}')
+};
+
+function saveMock(){
+  localStorage.setItem("pay2_preview_apps",JSON.stringify(mock.apps));
+  localStorage.setItem("pay2_preview_access",JSON.stringify(mock.access));
+  localStorage.setItem("pay2_preview_square",JSON.stringify(mock.square));
+}
+
+async function api(path,opt={}){
+  if(LOCAL_PREVIEW) return mockApi(path,opt);
+  const r = await fetch(path,{headers:{"Content-Type":"application/json",...(opt.headers||{})},...opt});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.detail ? d.error+"："+d.detail : (d.error || "通信エラー"));
+  return d;
+}
+
+async function mockApi(path,opt){
+  const body = opt.body ? JSON.parse(opt.body) : {};
+  if(path==="/api/config") return {...mock.square,square_public_ready:!!(mock.square.square_app_id&&mock.square.square_location_id),square_secret_ready:false,d1_ready:false,r2_ready:false};
+  if(path==="/api/apps") return {apps:mock.apps.filter(a=>a.enabled)};
+  if(path==="/api/me") return {user:JSON.parse(sessionStorage.getItem("pay2_preview_user")||"null")};
+  if(path==="/api/session"){const user={id:"preview-user",email:String(body.email||"preview@example.com")};sessionStorage.setItem("pay2_preview_user",JSON.stringify(user));return {ok:true,user};}
+  if(path==="/api/logout"){sessionStorage.removeItem("pay2_preview_user");return {ok:true};}
+  if(path==="/api/admin/login" && opt.method==="POST"){if(!String(body.password||"").trim())throw new Error("管理者パスワードを入力してください");sessionStorage.setItem("pay2_preview_admin","1");return {ok:true};}
+  if(path==="/api/admin/logout" && opt.method==="POST"){sessionStorage.removeItem("pay2_preview_admin");return {ok:true};}
+  if(path.startsWith("/api/admin/") && !sessionStorage.getItem("pay2_preview_admin")) throw new Error("管理者ログインが必要です");
+  if(path==="/api/admin/password" && opt.method==="POST"){if(String(body.new_password||"").length<10)throw new Error("新しい管理者パスワードは10文字以上にしてください");return {ok:true,changed:true};}
+  if(path.startsWith("/api/admin/apps") && (opt.method||"GET")==="GET") return {apps:mock.apps};
+  if(path==="/api/admin/apps" && opt.method==="POST"){
+    const id=body.id||("app-"+Date.now());
+    const x={...body,id,enabled:body.enabled!==false};
+    const i=mock.apps.findIndex(a=>a.id===id); if(i>=0)mock.apps[i]=x; else mock.apps.push(x); saveMock(); return {ok:true,id};
+  }
+  if(path.startsWith("/api/admin/apps/") && opt.method==="DELETE"){
+    const id=decodeURIComponent(path.split("/").pop()); const a=mock.apps.find(x=>x.id===id); if(a)a.enabled=false; saveMock(); return {ok:true};
+  }
+  if(path==="/api/admin/square-settings" && (opt.method||"GET")==="GET") return {...mock.square,square_secret_ready:false};
+  if(path==="/api/admin/square-settings" && opt.method==="POST"){mock.square={mode:body.mode||"sandbox",square_app_id:body.square_app_id||"",square_location_id:body.square_location_id||""};saveMock();return {ok:true};}
+  if(path==="/api/admin/square-test") throw new Error("Chrome単体プレビューではSquare API接続は行いません。Cloudflare公開後にテストできます。");
+  if(path==="/api/admin/users") return {users:[],access:[]};
+  if(path==="/api/access/start"){
+    const app=mock.apps.find(a=>a.id===body.app_id); if(!app)throw new Error("アプリがありません");
+    if(app.billing_mode==="free"||!app.monthly_price)return {ok:true,app,access:{allowed:true,reason:"free",status:"free"}};
+    let x=mock.access[app.id];
+    if(!x && app.trial_days>0){const end=new Date(Date.now()+app.trial_days*86400000).toISOString();x={status:"trialing",trial_ends_at:end};mock.access[app.id]=x;saveMock();}
+    if(x?.status==="trialing"&&new Date(x.trial_ends_at).getTime()>=Date.now())return {ok:true,app,access:{allowed:true,reason:"trial",status:"trialing",trial_ends_at:x.trial_ends_at}};
+    return {ok:true,app,access:{allowed:false,reason:"payment_required",status:"none"}};
+  }
+  if(path.startsWith("/api/access/check")){
+    const id=new URL("https://x"+path).searchParams.get("app_id"); return mockApi("/api/access/start",{body:JSON.stringify({app_id:id})});
+  }
+  throw new Error("プレビュー未対応: "+path);
+}
+
+function tab(id){
+  document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
+  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("active",p.id===id));
+}
+document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+
+async function boot(){
+  cfg = await api("/api/config");
+  apps = (await api("/api/apps")).apps;
+  me = (await api("/api/me")).user;
+  $("#footText").textContent = LOCAL_PREVIEW
+    ? "CHROME PREVIEW — D1 / Square への通信はしません"
+    : `${cfg.mode.toUpperCase()} — D1:${cfg.d1_ready?"接続":"未接続"} / R2:${cfg.r2_ready?"接続":"未接続"}`;
+  render();
+}
+
+function render(){ renderMember(); renderApps(); renderAdmin(); }
+
+function connectionHtml(){
+  const pub=cfg.square_public_ready,sec=cfg.square_secret_ready;
+  return `<div class="status ${(pub&&sec)?"ok":"warn"}">
+    <b>${(pub&&sec)?"Square接続準備OK":"Square設定待ち"}</b><br>
+    Application ID / Location ID：${pub?"設定済み":"未設定"}<br>
+    Access Token：${sec?"Secret設定済み":"未設定"}<br>
+    D1：${cfg.d1_ready?"接続済み":"プレビュー / 未接続"}<br>
+    R2：${cfg.r2_ready?"接続済み":"未使用または未接続"}
+  </div>`;
+}
+
+function renderMember(){
+  const el=$("#member");
+  if(me){
+    el.innerHTML=`<div class="card">
+      <div class="title">ログイン中</div>
+      <div class="status ok"><b>${esc(me.email)}</b><br>この端末の利用状態を確認できます。</div>
+      <button class="btn secondary" id="logout">ログアウト</button>
+    </div>
+    <div class="card"><div class="sub">接続状態</div>${connectionHtml()}</div>`;
+    $("#logout").onclick=async()=>{await api("/api/logout",{method:"POST"});me=null;render();};
+  }else{
+    el.innerHTML=`<div class="card">
+      <div class="title">利用者</div>
+      <p class="muted">現在は動作確認用の簡易ログインです。本番公開前にメール認証へ切り替えられます。</p>
+      <label>メールアドレス</label>
+      <input class="field" id="email" type="email" placeholder="name@example.com">
+      <button class="btn primary" id="login">利用を開始</button>
+    </div>
+    <div class="card"><div class="sub">接続状態</div>${connectionHtml()}</div>`;
+    $("#login").onclick=async()=>{
+      try{
+        const d=await api("/api/session",{method:"POST",body:JSON.stringify({email:$("#email").value})});
+        me=d.user;render();
+      }catch(e){alert(e.message)}
+    };
+  }
+}
+
+function accessLabel(x){
+  if(!x)return "";
+  if(x.reason==="free")return "無料";
+  if(x.reason==="trial")return `無料期間中（${new Date(x.trial_ends_at).toLocaleDateString("ja-JP")}まで）`;
+  if(x.reason==="active")return "契約中";
+  if(x.reason==="trial_ended")return "無料期間終了";
+  return "支払いが必要";
+}
+
+function renderApps(){
+  const el=$("#apps");
+  el.innerHTML=apps.map(a=>`<div class="card">
+    <div class="row">
+      <div class="title">${esc(a.name)}</div>
+      <span class="tag">${a.billing_mode==="free"||!a.monthly_price?"無料":"月額"}</span>
+    </div>
+    <div class="price">¥${yen(a.monthly_price)} <small>${a.monthly_price?" / 月":"無料"}</small></div>
+    <p class="muted">無料期間：${a.trial_days}日<br>${a.monthly_price?`有料利用期間：${a.paid_days||30}日<br>`:""}URL：${esc(a.url||"未設定")}</p>
+    <div id="access-${esc(a.id)}"></div>
+    <div class="stack">
+      <button class="btn primary accessStart" data-id="${esc(a.id)}">利用判定</button>
+      ${a.monthly_price?`<button class="btn secondary payOpen" data-id="${esc(a.id)}">Squareテスト</button>`:""}
+    </div>
+  </div>`).join("");
+
+  document.querySelectorAll(".accessStart").forEach(b=>b.onclick=()=>startApp(b.dataset.id));
+  document.querySelectorAll(".payOpen").forEach(b=>b.onclick=()=>openPayment(b.dataset.id));
+}
+
+async function startApp(id){
+  if(!me){alert("先に利用者タブでメールアドレスを入力してください");tab("member");return;}
+  try{
+    const d=await api("/api/access/start",{method:"POST",body:JSON.stringify({app_id:id})});
+    const box=$("#access-"+CSS.escape(id));
+    box.innerHTML=`<div class="status ${d.access.allowed?"ok":"warn"}"><b>${esc(accessLabel(d.access))}</b><br>${d.access.allowed?"利用できます。":"決済後に利用できます。"}</div>`;
+    if(d.access.allowed && d.app.url && confirm("このアプリを開きますか？")){
+      if(!LOCAL_PREVIEW) location.href=d.app.url;
+    }
+  }catch(e){alert(e.message)}
+}
+
+async function loadSquareSdk(){
+  if(LOCAL_PREVIEW) throw new Error("Chrome単体プレビューではSquareカード欄は使用しません。");
+  if(!cfg.square_public_ready) throw new Error("Square Application ID / Location ID が未設定です。");
+  if(window.Square && squareLoadedMode===cfg.mode)return;
+
+  const old=document.getElementById("squareSdk");
+  if(old)old.remove();
+  window.Square=undefined;
+
+  const src=cfg.mode==="production"
+    ?"https://web.squarecdn.com/v1/square.js"
+    :"https://sandbox.web.squarecdn.com/v1/square.js";
+
+  await new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.id="squareSdk";s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error("Square SDKを読み込めません"));
+    document.head.appendChild(s);
+  });
+  squareLoadedMode=cfg.mode;
+}
+
+async function openPayment(id){
+  if(!me){alert("先に利用者ログインをしてください");tab("member");return;}
+  selectedPayApp=apps.find(a=>a.id===id);
+  if(!selectedPayApp)return;
+
+  $("#payTitle").textContent=`${selectedPayApp.name} — Square ${cfg.mode}`;
+  $("#payExplain").textContent=LOCAL_PREVIEW
+    ?"Chrome単体では画面確認のみです。Cloudflare公開後にSandboxカード決済を試せます。"
+    :`Sandboxでは ¥${yen(selectedPayApp.monthly_price)} のテスト決済を行い、成功時は${selectedPayApp.paid_days||30}日間の利用権を付けます。`;
+  $("#payStatus").innerHTML="";
+  $("#payModal").classList.add("show");
+
+  try{
+    await loadSquareSdk();
+    if(card){try{await card.destroy()}catch{} card=null;}
+    const payments=Square.payments(cfg.square_app_id,cfg.square_location_id);
+    card=await payments.card();
+    await card.attach("#card-container");
+  }catch(e){
+    $("#payStatus").innerHTML=`<div class="status warn">${esc(e.message)}</div>`;
+  }
+}
+
+$("#closePay").onclick=()=>$("#payModal").classList.remove("show");
+
+$("#payBtn").onclick=async()=>{
+  if(LOCAL_PREVIEW){$("#payStatus").innerHTML='<div class="status warn">Cloudflare公開後にSquare Sandboxテストを行います。</div>';return;}
+  if(!card||!selectedPayApp)return;
+
+  const btn=$("#payBtn");btn.disabled=true;
+  try{
+    const result=await card.tokenize({
+      amount:String(selectedPayApp.monthly_price),
+      currencyCode:"JPY",
+      intent:"CHARGE",
+      customerInitiated:true,
+      sellerKeyedIn:false,
+      billingContact:{email:me.email,countryCode:"JP"}
+    });
+    if(result.status!=="OK")throw new Error("カードトークン作成に失敗しました");
+
+    const d=await api("/api/sandbox-payment",{
+      method:"POST",
+      body:JSON.stringify({source_id:result.token,app_id:selectedPayApp.id})
+    });
+
+    $("#payStatus").innerHTML=`<div class="status ok">
+      <b>Square Sandbox 決済成功</b><br>
+      Payment ID：${esc(d.payment.id)}<br>
+      Status：${esc(d.payment.status)}<br>
+      金額：¥${yen(d.payment.amount)}
+    </div>`;
+  }catch(e){
+    $("#payStatus").innerHTML=`<div class="status bad"><b>決済テスト失敗</b><br>${esc(e.message)}</div>`;
+  }finally{btn.disabled=false;}
+};
+
+function adminHeaders(){return {}}
+
+function showAdminLogin(message=""){
+  const el=$("#admin");
+  el.innerHTML=`<div class="card">
+    <div class="title">管理者</div>
+    <p class="muted">管理者パスワードを入力してください。パスワードそのものはHTMLやGitHubには保存されません。</p>
+    ${message?`<div class="status bad">${esc(message)}</div>`:""}
+    <input class="field" id="adminKey" type="password" autocomplete="current-password" placeholder="管理者パスワード">
+    <button class="btn primary" id="adminGo">管理画面を開く</button>
+  </div>`;
+  $("#adminGo").onclick=async()=>{
+    const v=$("#adminKey").value;
+    if(!v)return;
+    try{
+      await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:v})});
+      loadAdmin();
+    }catch(e){showAdminLogin(e.message)}
+  };
+  $("#adminKey").onkeydown=e=>{if(e.key==="Enter")$("#adminGo").click()};
+}
+
+function renderAdmin(){ loadAdmin(); }
+
+async function loadAdmin(){
+  const el=$("#admin");
+  try{
+    const [a,s,u]=await Promise.all([
+      api("/api/admin/apps",{headers:adminHeaders()}),
+      api("/api/admin/square-settings",{headers:adminHeaders()}),
+      api("/api/admin/users",{headers:adminHeaders()})
+    ]);
+    apps=a.apps;
+
+    el.innerHTML=`<div class="card">
+      <div class="row"><div class="title">中央管理</div><button class="btn secondary sm" id="adminOut">閉じる</button></div>
+      <div class="sub" style="margin-top:12px">Square設定</div>
+      <label>環境</label>
+      <select id="sqMode"><option value="sandbox">Sandbox</option><option value="production">Production</option></select>
+      <label>Application ID</label>
+      <input class="field" id="sqAppId" value="${esc(s.square_app_id||"")}">
+      <label>Location ID（場所ID）</label>
+      <input class="field" id="sqLocation" value="${esc(s.square_location_id||"")}">
+      <div class="status ${s.square_secret_ready?"ok":"warn"}">Access Token：${s.square_secret_ready?"Cloudflare Secret設定済み":"まだSecret未設定"}</div>
+      <div class="stack">
+        <button class="btn primary" id="sqSave">Square設定を保存</button>
+        <button class="btn secondary" id="sqTest">接続確認</button>
+      </div>
+      <div id="sqResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="sub">管理者パスワード変更</div>
+      <p class="muted">現在のパスワードを確認してから変更します。新しいパスワードそのものはD1・HTML・GitHubには保存せず、D1には照合用のハッシュだけを保存します。</p>
+      <label>現在のパスワード</label>
+      <input class="field" id="adminCurrentPassword" type="password" autocomplete="current-password">
+      <label>新しいパスワード</label>
+      <input class="field" id="adminNewPassword" type="password" autocomplete="new-password">
+      <label>新しいパスワード（確認）</label>
+      <input class="field" id="adminNewPassword2" type="password" autocomplete="new-password">
+      <button class="btn secondary" id="adminPasswordChange">パスワードを変更</button>
+      <div id="adminPasswordResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><div class="sub">アプリ・料金設定</div><button class="btn secondary sm" id="addApp">追加</button></div>
+      <div id="adminApps"></div>
+    </div>
+
+    <div class="card">
+      <div class="sub">利用者</div>
+      <div class="muted">${u.users.length}人登録</div>
+      <div style="overflow:auto;max-height:300px">${renderUsersTable(u)}</div>
+    </div>`;
+
+    $("#sqMode").value=s.mode||"sandbox";
+    $("#adminOut").onclick=async()=>{try{await api("/api/admin/logout",{method:"POST"})}catch{}showAdminLogin();};
+
+    $("#sqSave").onclick=async()=>{
+      await api("/api/admin/square-settings",{
+        method:"POST",headers:adminHeaders(),
+        body:JSON.stringify({
+          mode:$("#sqMode").value,
+          square_app_id:$("#sqAppId").value,
+          square_location_id:$("#sqLocation").value
+        })
+      });
+      cfg=await api("/api/config");
+      alert("保存しました");
+      loadAdmin();
+    };
+
+    $("#sqTest").onclick=async()=>{
+      try{
+        const x=await api("/api/admin/square-test",{method:"POST",headers:adminHeaders()});
+        $("#sqResult").innerHTML=`<div class="status ok"><b>Square API 接続OK</b><br>Location ID一致：${x.matched_location?"はい":"いいえ"}</div>`;
+      }catch(e){$("#sqResult").innerHTML=`<div class="status bad">${esc(e.message)}</div>`}
+    };
+
+    $("#adminPasswordChange").onclick=async()=>{
+      const current=$("#adminCurrentPassword").value;
+      const next=$("#adminNewPassword").value;
+      const next2=$("#adminNewPassword2").value;
+      const box=$("#adminPasswordResult");
+      if(next!==next2){box.innerHTML='<div class="status bad">新しいパスワードが一致しません。</div>';return;}
+      if(next.length<10){box.innerHTML='<div class="status bad">新しいパスワードは10文字以上にしてください。</div>';return;}
+      try{
+        await api("/api/admin/password",{
+          method:"POST",headers:adminHeaders(),
+          body:JSON.stringify({current_password:current,new_password:next})
+        });
+        $("#adminCurrentPassword").value="";
+        $("#adminNewPassword").value="";
+        $("#adminNewPassword2").value="";
+        box.innerHTML='<div class="status ok">管理者パスワードを変更しました。</div>';
+      }catch(e){box.innerHTML=`<div class="status bad">${esc(e.message)}</div>`}
+    };
+
+    renderAdminApps();
+    $("#addApp").onclick=()=>editApp({id:"",name:"新しいWebアプリ",url:"https://",billing_mode:"subscription",trial_days:30,monthly_price:500,paid_days:30,enabled:true});
+  }catch(e){
+    showAdminLogin(e.message.includes("ログイン")?"":e.message);
+  }
+}
+
+function renderUsersTable(data){
+  if(!data.users.length)return '<p class="muted">まだ利用者はいません。</p>';
+  return `<table><thead><tr><th>メール</th><th>利用権</th></tr></thead><tbody>`+
+    data.users.map(u=>{
+      const xs=data.access.filter(a=>a.user_id===u.id);
+      const t=xs.length?xs.map(a=>`${esc(a.app_name||a.app_id)}：${esc(a.status)}`).join("<br>"):"—";
+      return `<tr><td>${esc(u.email)}</td><td>${t}</td></tr>`;
+    }).join("")+`</tbody></table>`;
+}
+
+function renderAdminApps(){
+  const el=$("#adminApps");
+  el.innerHTML=apps.map((a,i)=>`<div class="adminItem">
+    <div class="row">
+      <div><b>${esc(a.name)}</b><div class="muted">${a.trial_days}日無料 / 月額 ¥${yen(a.monthly_price)}${a.monthly_price?` / 有料${a.paid_days||30}日`:""}</div></div>
+      <button class="btn secondary sm edit" data-i="${i}">編集</button>
+    </div>
+  </div>`).join("");
+  document.querySelectorAll(".edit").forEach(b=>b.onclick=()=>editApp(apps[Number(b.dataset.i)]));
+}
+
+function editApp(a){
+  const el=$("#adminApps");
+  document.getElementById("editBox")?.remove();
+  el.insertAdjacentHTML("afterbegin",`<div class="adminItem" id="editBox">
+    <div class="sub">${a.id?"設定変更":"新規追加"}</div>
+    <label>アプリ名</label><input class="field" id="eName" value="${esc(a.name)}">
+    <label>公開URL</label><input class="field" id="eUrl" value="${esc(a.url)}">
+    <label>課金</label>
+    <select id="eMode"><option value="free">無料</option><option value="subscription">月額</option></select>
+    <div class="grid2">
+      <div><label>無料期間（日）</label><input class="field" id="eTrial" type="number" min="0" value="${a.trial_days}"></div>
+      <div><label>有料利用期間（日）</label><input class="field" id="ePaidDays" type="number" min="1" value="${a.paid_days||30}"></div>
+    </div>
+    <label>月額（円）</label><input class="field" id="ePrice" type="number" min="0" value="${a.monthly_price}">
+    <label><input id="eEnabled" type="checkbox" ${a.enabled?"checked":""}> 利用者画面に表示</label>
+    <div class="stack" style="margin-top:10px">
+      <button class="btn primary" id="eSave">保存</button>
+      ${a.id?'<button class="btn danger" id="eDelete">非表示</button>':""}
+    </div>
+  </div>`);
+  $("#eMode").value=a.billing_mode||((a.monthly_price||0)>0?"subscription":"free");
+
+  $("#eSave").onclick=async()=>{
+    try{
+      await api("/api/admin/apps",{
+        method:"POST",headers:adminHeaders(),
+        body:JSON.stringify({
+          id:a.id,name:$("#eName").value,url:$("#eUrl").value,
+          billing_mode:$("#eMode").value,
+          trial_days:Number($("#eTrial").value),
+          monthly_price:Number($("#ePrice").value),
+          paid_days:Number($("#ePaidDays").value),
+          enabled:$("#eEnabled").checked
+        })
+      });
+      await refreshAll();
+      loadAdmin();
+    }catch(e){alert(e.message)}
+  };
+
+  if(a.id)$("#eDelete").onclick=async()=>{
+    if(confirm("利用者画面から非表示にしますか？")){
+      await api("/api/admin/apps/"+encodeURIComponent(a.id),{method:"DELETE",headers:adminHeaders()});
+      await refreshAll();
+      loadAdmin();
+    }
+  };
+}
+
+async function refreshAll(){
+  cfg=await api("/api/config");
+  apps=(await api("/api/apps")).apps;
+  renderMember();renderApps();
+}
+
+boot().catch(e=>{
+  document.body.innerHTML=`<div style="padding:20px;font-family:sans-serif">起動エラー：${esc(e.message)}</div>`;
+});
+</script>
+</body>
+</html>
